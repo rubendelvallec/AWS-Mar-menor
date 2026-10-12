@@ -1,0 +1,191 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Crear una VPC con dos subredes publicas, grupos de seguridad y una instancia EC2
+
+Resources:
+  
+  ## Crear la VPC
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 192.168.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: proy-vpc
+
+  ## Subred Pública 1
+  PublicSubnet1:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 192.168.1.0/24
+      AvailabilityZone: !Select 
+        - 0
+        - !GetAZs 
+          Ref: AWS::Region
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: proy-public-subnet-1
+
+  ## Subred Pública 2
+  PublicSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref VPC
+      CidrBlock: 192.168.2.0/24
+      AvailabilityZone: !Select 
+        - 1
+        - !GetAZs 
+          Ref: AWS::Region
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: proy-public-subnet-2
+
+  ## Tabla de rutas pública
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+
+  ## Ruta de internet
+  PublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: VPCGatewayAttachment
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  ## Asociar tabla de rutas con subred 1
+  PublicRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet1
+      RouteTableId: !Ref PublicRouteTable
+
+  ## Asociar tabla de rutas con subred 2
+  PublicRouteTableAssociation2:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet2
+      RouteTableId: !Ref PublicRouteTable
+
+  ## Internet Gateway
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties: {}
+
+  ## Adjuntar IGW a la VPC
+  VPCGatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+ ##Grupo de seguridad asociado a la instancia
+  FlaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Permite conexion a la instancia
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: Flask Security Group
+
+
+  ## Security Group del Balanceador 
+  BalanceadorSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupName: BalanceadorSecurityGroup
+      GroupDescription: "Acceso HTTP publico para balanceador"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: BalanceadorSecurityGroup
+
+  ## Security Group de las tareas ECS (puerto 5000 desde el balanceador)
+  TaskSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    DependsOn: BalanceadorSecurityGroup
+    Properties:
+      GroupName: TaskSecurityGroup
+      GroupDescription: "Permite trafico al puerto Flask 5000 desde el balanceador"
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5000
+          ToPort: 5000
+          SourceSecurityGroupId: !Ref BalanceadorSecurityGroup
+      Tags:
+        - Key: Name
+          Value: TaskSecurityGroup
+
+  ## Instancia EC2 de pruebas
+  DockerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      ImageId: ami-08a0d1e16fc3f61ea
+      KeyName: proy-keypair
+      IamInstanceProfile: LabInstanceProfile
+      SubnetId: !Ref PublicSubnet1
+      SecurityGroupIds:
+        - !Ref FlaskSecurityGroup
+      Tags:
+        - Key: Name
+          Value: DockerInstance
+      UserData:
+        Fn::Base64: !Sub |
+          #!/bin/bash
+          dnf update -y
+          dnf install -y docker
+          systemctl enable docker
+          systemctl start docker
+  DiskVolume:
+    Type: AWS::EC2::Volume
+    Properties:
+      Size: 100
+      AvailabilityZone: !GetAtt DockerInstance.AvailabilityZone
+    DeletionPolicy: Snapshot
+
+  DiskMountPoint:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      InstanceId: !Ref DockerInstance
+      VolumeId: !Ref DiskVolume
+      Device: /dev/sdh
+
+Outputs:
+
+  VPCId:
+    Description: ID de la VPC creada
+    Value: !Ref VPC
+
+  PublicSubnet1Id:
+    Description: "Subred publica 1"
+    Value: !Ref PublicSubnet1
+
+  PublicSubnet2Id:
+    Description: "Subred pública 2"
+    Value: !Ref PublicSubnet2
+
+  TestInstancePublicIP:
+    Description: "IP publica de la instancia EC2 de pruebas"
+    Value: !GetAtt DockerInstance.PublicIp

@@ -1,0 +1,28 @@
+#Crear archivos
+mkdir flask_docker
+nano flask_docker/funcion.py
+nano flask_docker/requirements.txt
+nano flask_docker/Dockerfile
+
+#Probar imagen
+cd flask_docker
+sudo systemctl start docker #inicio docker
+sudo docker build -t flask_container . #Construyo una imagen Docker
+sudo docker run -p 5000:5000 -d flask_container #Inicio un contenedor Docker a partir de la imagen flask_container
+sudo docker ps 
+curl "http://127.0.0.1:5000/maxdiff?month=3&year=2017" #Compruebo que toda va bien
+
+##subir imagen a ECR
+
+#Recupere un token de autenticación y autentique su cliente de Docker en el registro. Use AWS CLI:
+aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin 339713182596.dkr.ecr.us-east-1.amazonaws.com
+
+#Cuando se complete la creación, etiquete la imagen para poder enviarla a este repositorio:
+docker tag flask_container 339713182596.dkr.ecr.us-east-1.amazonaws.com/proy-repo:flask_container
+
+#comando para enviar esta imagen al repositorio de AWS recién creado
+docker push 339713182596.dkr.ecr.us-east-1.amazonaws.com/proy-repo:flask_container
+
+
+
+
